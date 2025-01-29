@@ -1,13 +1,14 @@
 #Initial Data Comparison
 #Prepare Data
 #Merge All of Us and NHANES data
-We will start by merging NHANES data and All of Us data into one dataframe. The NHANES cohort has its own weights that must be applied, and we added those in 2.2 to NHANES data. For All of Us we assign a weight of 1 to all participants to take them as is.
+#We will start by merging NHANES data and All of Us data into one dataframe. The NHANES cohort has its own weights that must be applied, and we added those in 2.2 to NHANES data. For All of Us we assign a weight of 1 to all participants to take them as is.
 
 complete_aou_df$weight <- 1 #Assign a weight of 1 to All of Us participants
 head(complete_aou_df)
 combined_df <- rbind(complete_aou_df,complete_nhanes_df) # Combine NHANES and All of Us data
-Create Dummy Variables
-LASSO requires categorical variables be broken up into dummy variables. The fastDummies package allows us to do this.
+
+#Create Dummy Variables
+#LASSO requires categorical variables be broken up into dummy variables. The fastDummies package allows us to do this.
 
 lasso_df <- dummy_cols(combined_df,
                         select_columns=c("race","gender","highest_grade","marital_status","health_insurance",
@@ -22,8 +23,9 @@ lasso_df <- lasso_df %>%
                 relocate(participation, .after=last_col()) # Reorder columns
 lasso_df <- lasso_df[complete.cases(lasso_df),] # Ensure there are only complete cases
 head(lasso_df)
-Run Univariate LASSO regression
-Here we run the univariate LASSO regression. This will help us see how variables predict participation in All of Us
+
+#Run Univariate LASSO regression
+#Here we run the univariate LASSO regression. This will help us see how variables predict participation in All of Us
 
 x <- as.matrix(lasso_df[2:(ncol(lasso_df)-3)]) # Matrix of predictors
 y <- as.matrix(lasso_df[[ncol(lasso_df)]]) # Matrix of participation variables
@@ -34,8 +36,9 @@ model_coef_uw <- as.data.frame(as.matrix(beta)) # Convert to dataframe
 model_coef_uw$names <- rownames(model_coef_uw) # Save row names
 model_coef_uw <- model_coef_uw[-1,] # Remove intercept value (not important for prediction)
 head(model_coef_uw)
-Analyze effect sizes
-We standardize effect sizes for all variables in order to compare them. Without standradization the effect sizes will be on different scales and can not be easily compared.
+
+#Analyze effect sizes
+#We standardize effect sizes for all variables in order to compare them. Without standradization the effect sizes will be on different scales and can not be easily compared.
 
 head(lasso_df)
 dim(lasso_df)
@@ -105,16 +108,18 @@ model_coef_plot_uw <- ggplot(data=model_coef_uw_full,aes(x=names,y=s_s1,color=la
 #                     options(repr.plot.width=4)
 
 model_coef_plot_uw
-Develop Weights
-Prepare Data for LASSO
-Merge All of Us and NHANES data
-We will start by merging NHANES data and All of Us data into one dataframe. The NHANES cohort has its own weights that must be applied, and we added those in 2.2 to NHANES data. For All of Us we assign a weight of 1 to all participants to take them as is.
+
+#Develop Weights
+#Prepare Data for LASSO
+#Merge All of Us and NHANES data
+#We will start by merging NHANES data and All of Us data into one dataframe. The NHANES cohort has its own weights that must be applied, and we added those in 2.2 to NHANES data. For All of Us we assign a weight of 1 to all participants to take them as is.
 
 complete_aou_df$weight <- 1 #Assign a weight of 1 to All of Us participants
 head(complete_aou_df)
 combined_df <- rbind(complete_aou_df,complete_nhanes_df) # Combine NHANES and All of Us data
-Create Dummy Variables
-LASSO requires categorical variables be broken up into dummy variables. The fastDummies package allows us to do this.
+
+#Create Dummy Variables
+#LASSO requires categorical variables be broken up into dummy variables. The fastDummies package allows us to do this.
 
 lasso_df <- dummy_cols(combined_df,
                         select_columns=c("race","gender","highest_grade","marital_status","health_insurance",
@@ -129,8 +134,9 @@ lasso_df <- lasso_df %>%
                 relocate(participation, .after=last_col()) # Reorder columns
 lasso_df <- lasso_df[complete.cases(lasso_df),] # Ensure there are only complete cases
 head(lasso_df)
-Develop LASSO IP weight model
-To develop weights we break up the data into matrices. To capture the full breadth of the correlation structure in the data, we include all possible 2-way interactions
+
+#Develop LASSO IP weight model
+#To develop weights we break up the data into matrices. To capture the full breadth of the correlation structure in the data, we include all possible 2-way interactions
 
 f <- as.formula(~ .*.) # Formula to ensure all 2 way interactions are added
 x <- model.matrix(f,lasso_df[2:(ncol(lasso_df)-3)])[,-1] # Matrix of predictors
@@ -139,8 +145,9 @@ w <- as.matrix(lasso_df[[(ncol(lasso_df)-2)]]) # Matrix of weights
 model_int_og <- cv.glmnet(x,y,weights=w,family="binomial") # Build model to calculate weights
 plot(model_int_og)
 plot(model_int_og$glmnet.fit,"lambda",labels=TRUE)
-Predict participation probability
-Using the model above, we predict participation probability for each person.
+
+#Predict participation probability
+#Using the model above, we predict participation probability for each person.
 
 aou_dummy_df <- dummy_cols(complete_aou_df,
                                 select_columns=c("race","gender","highest_grade","marital_status","health_insurance",
@@ -157,10 +164,10 @@ aou_dummy_df <- aou_dummy_df %>%
 head(aou_dummy_df)
 f <- as.formula(~ .*.) # Formula to create all 2 way interactions
 predict_x <- model.matrix(f,aou_dummy_df[2:(ncol(aou_dummy_df)-3)])[,-1] # Matrix of predictors
-Calculate Weights
-Finally we calculate IP weights using the formula (1-Pi)/Pi where Pi is participation probability.
 
-Note: LASSO does not return the exact same coefficients every time (but they are still very close), thus when calculating weights your range may be slightly different than the range listed in the paper. The weights are still effective in reducing participation bias, and their effectiveness is further tested in "5 Validate Weights"
+#Calculate Weights
+#Finally we calculate IP weights using the formula (1-Pi)/Pi where Pi is participation probability.
+#Note: LASSO does not return the exact same coefficients every time (but they are still very close), thus when calculating weights your range may be slightly different than the range listed in the paper. The weights are still effective in reducing participation bias, and their effectiveness is further tested in "5 Validate Weights"
 
 predict_aou <- aou_dummy_df # Temporary dataframe to calculate IP weights
 head(predict_x)
@@ -232,7 +239,8 @@ system(paste0("gsutil cp ./", destination_filename, " ", my_bucket, "/data/"), i
 system(paste0("gsutil ls ", my_bucket, "/data/*.csv"), intern=T)
 complete_aou_df$weight <- aou_weights$weight
 head(complete_aou_df)
-See weight distribution
+
+#See weight distribution
 # This snippet assumes that you run setup first
 
 # This code copies a file from your Google Bucket into a dataframe
@@ -265,13 +273,15 @@ density_plot <- ggplot(aou_weights,aes(x=weight,y=after_stat(scaled))) +
     ylab("Density")
 
 density_plot
-Validate Weights
-Merge All of Us and NHANES data
-We will start by merging NHANES data and All of Us data into one dataframe. The NHANES cohort has its own weights that must be applied, and we added those in 2.2 to NHANES data. For All of Us we assign a weight of 1 to all participants to take them as is.
+
+#Validate Weights
+#Merge All of Us and NHANES data
+#We will start by merging NHANES data and All of Us data into one dataframe. The NHANES cohort has its own weights that must be applied, and we added those in 2.2 to NHANES data. For All of Us we assign a weight of 1 to all participants to take them as is.
 
 combined_df <- rbind(complete_aou_df,complete_nhanes_df) # Combine NHANES and All of Us data
-Create Dummy Variables
-LASSO requires categorical variables be broken up into dummy variables. The fastDummies package allows us to do this.
+
+#Create Dummy Variables
+#LASSO requires categorical variables be broken up into dummy variables. The fastDummies package allows us to do this.
 
 lasso_df <- dummy_cols(combined_df,
                         select_columns=c("race","gender","highest_grade","marital_status","health_insurance",
@@ -286,8 +296,9 @@ lasso_df <- lasso_df %>%
                 relocate(participation, .after=last_col()) # Reorder columns
 lasso_df <- lasso_df[complete.cases(lasso_df),] # Ensure there are only complete cases
 head(lasso_df)
-Run Univariate LASSO regression
-Here we run the univariate LASSO regression. This will help us see how variables predict participation in All of Us
+
+#Run Univariate LASSO regression
+#Here we run the univariate LASSO regression. This will help us see how variables predict participation in All of Us
 
 x <- as.matrix(lasso_df[2:(ncol(lasso_df)-3)]) # Matrix of predictors
 y <- as.matrix(lasso_df[[ncol(lasso_df)]]) # Matrix of participation variables
@@ -298,8 +309,9 @@ model_coef_w <- as.data.frame(as.matrix(beta)) # Convert to dataframe
 model_coef_w$names <- rownames(model_coef_w) # Save row names
 model_coef_w <- model_coef_w[-1,] # Remove intercept value (not important for prediction)
 head(model_coef_w)
-Analyze effect sizes
-We standardize effect sizes for all variables in order to compare them. Without standradization the effect sizes will be on different scales and can not be easily compared.
+
+#Analyze effect sizes
+#We standardize effect sizes for all variables in order to compare them. Without standradization the effect sizes will be on different scales and can not be easily compared.
 
 wt <- lasso_df$weight # Extract weights
 sx <- sapply(lasso_df[,2:(ncol(lasso_df)-3)],function(x) sqrt(wtd.var(x,wt))) #Get standard deviation for each predictor
@@ -368,6 +380,9 @@ model_coef_w_plot <- ggplot(data=model_coef_w_full,aes(x=names,y=s_s1,color=labe
                     
 model_coef_w_plot
 
+#Save Weights
+#Normalize IP weights and then save the weights
+               
 # This snippet assumes that you run setup first
 
 # This code saves your dataframe into a csv file in a "data" folder in Google Bucket
