@@ -473,7 +473,6 @@ aou_w <- multinomialPrep(aou_w) # Prep data for correlation coefficeint calculat
 nhanes_w <- multinomialPrep(nhanes_w) # Prep data for correlation coefficeint calculations
 
 compare_vars <- colnames(aou_w)[2:(ncol(aou_w)-3)] # List of variables to compare
-
 corr_df <- data.frame() # Data frame for correlation coefficients
 for(i in 1:(length(compare_vars)-1)){ # For all variables except the last one
     for(j in (i+1):length(compare_vars)){ # For all variables not including the current iteration
@@ -588,7 +587,6 @@ for(i in 1:nrow(corr_df)){
 }
 
 colnames(corr_df)[5:7] <- c("nhanes_aou_uw","nhanes_aou_w","diff_lab")
-head(corr_df)
 
 corr_df_2 <- melt(subset(corr_df,select=-c(nhanes_aou_uw,nhanes_aou_w)), id=c("formula","diff_lab")) # Convert to long form for plotting
 
@@ -599,7 +597,6 @@ corr_df_2$variable[corr_df_2$variable == "aou_uw_r"] <- "All of Us (unweighted)"
 corr_df_2$variable[corr_df_2$variable == "aou_w_r"] <- "All of Us (weighted)" # Change label
 
 corr_df_2$variable <- factor(corr_df_2$variable,levels=c("NHANES","All of Us (unweighted)","All of Us (weighted)")) # Make it a factor
-(corr_df_2$formula)
       
 # Define the mapping as a named vector
 name_map <- c(
@@ -610,7 +607,7 @@ name_map <- c(
   "race_3" = "Race and Ethnicity (Hispanic or Latino)",
   "race_4" = "Race and Ethnicity (Asian)",
   "race_5" = "Race and Ethnicity (Other/Multiracial)",
-  "sex_at_birth" = "Sex at Birth",
+  "sex_at_birth" = "Sex",
   "education" = "Education",  
   "education_1" = "Education (Less than 9th grade)",
   "education_2" = "Education (9-11th grade)",
@@ -657,8 +654,6 @@ corr_df_2 <- corr_df_2 %>%
 corr_df <- corr_df %>%
   mutate(formula = replace_terms(formula, name_map))
 
-(corr_df_2$formula)
-
 corr_plot <- ggplot(corr_df_2, aes(x=formula,y=value,shape=variable)) +
                 geom_point(aes(color=diff_lab,shape=variable),size=2) + 
                 theme_classic(base_size=6) +
@@ -673,15 +668,43 @@ corr_plot <- ggplot(corr_df_2, aes(x=formula,y=value,shape=variable)) +
 corr_plot
 
 # Compare beta coefficients
+complete_nhanes_df$nativity[complete_nhanes_df$nativity == 1] <- 0
+complete_nhanes_df$nativity[complete_nhanes_df$nativity == 2] <- 1
+
+complete_aou_df$nativity[complete_aou_df$nativity == 1] <- 0
+complete_aou_df$nativity[complete_aou_df$nativity == 2] <- 1
+
+demo1720 <- read_xpt("P_DEMO.xpt")
+demo2123 <- read_xpt("DEMO_L.xpt")
+
+demo1720 <- demo1720 %>%
+                select(id=SEQN,
+                      psu=SDMVPSU,
+                      stra=SDMVSTRA)
+
+demo2123 <- demo2123 %>%
+                select(id=SEQN,
+                      psu=SDMVPSU,
+                      stra=SDMVSTRA)
+
+demo <- rbind(demo1720,demo2123)
+
+complete_nhanes_df <- left_join(complete_nhanes_df,demo,by="id")
+
 aou_weights <- complete_aou_df$weight
+
+nhanes_psu <- complete_nhanes_df$psu
+nhanes_stra <- complete_nhanes_df$stra
 nhanes_weights <- complete_nhanes_df$weight
 
 aou_regression <- complete_aou_df %>%
                     subset(select=-c(id,data_label,participation,weight)) %>%
                     select(everything(),age)
+
 nhanes_regression <- complete_nhanes_df %>%
-                    subset(select=-c(id,data_label,participation,weight)) %>%
+                    subset(select=-c(id,data_label,participation,weight,psu,stra)) %>%
                     select(everything(),age)
+
 aou_regression <- dummy_cols(aou_regression,
                         select_columns=c("race","marital_status","education",
                                          "overall_health","drinking_habits","smoking_habits"),
@@ -699,8 +722,6 @@ nhanes_regression <- dummy_cols(nhanes_regression,
                         remove_selected_columns = TRUE) # Convert categorical variables to dummy variables
 
 nhanes_regression <- nhanes_regression %>% relocate(age,.after=last_col())
-
-colnames(aou_regression)
 
 # Define groups to avoid intra-category comparisons
 categories <- list(
@@ -723,11 +744,17 @@ same_category <- function(var1, var2, categories) {
 }
 
 # Initialize dataframe
-beta_df <- data.frame(Formula = character(),
-                      NHANES_Beta = numeric(),
-                      AOU_Beta = numeric(),
-                      WAOU_Beta = numeric(),
+beta_df <- data.frame(formula = character(),
+                      beta_nhanes = numeric(),
+                      beta_aou = numeric(),
+                      beta_waou = numeric(),
                       stringsAsFactors = FALSE)
+
+beta_graphing <- data.frame(formula = character(),
+                           beta = numeric(),
+                           lower = numeric(),
+                           upper = numeric(),
+                           dataset = character())
 
 # Loop through all column pairs
 for (y in 1:(ncol(aou_regression)-1)) {
@@ -744,57 +771,61 @@ for (y in 1:(ncol(aou_regression)-1)) {
     # NHANES Regression
     temp_nhanes <- nhanes_regression[, c(y, x)]
     colnames(temp_nhanes) <- c("y", "x")
-    temp_nhanes$y <- as.numeric(temp_nhanes$y == 1)
+    temp_nhanes$y <- as.integer(temp_nhanes$y)
+    temp_nhanes$psu <- nhanes_psu
+    temp_nhanes$stra <- nhanes_stra
+    temp_nhanes$weight <- nhanes_weights  
     
-    model_nhanes <- glm(y ~ x, data = temp_nhanes, family = "binomial", weights = nhanes_weights / mean(nhanes_weights))
+    NHANES_all <- svydesign(data=temp_nhanes, id=~psu, strata=~stra, weights=~weight, nest=TRUE)
+    model_nhanes <- svyglm(y ~ x, design=NHANES_all, family="binomial")
     nhanes_beta <- summary(model_nhanes)$coefficients["x", 1]
+      
+    nhanes_interval <- confint(model_nhanes,verbose=F)
+    nhanes_lower <- nhanes_interval["x",1]
+    nhanes_upper <- nhanes_interval["x",2]
     
     # AOU Regression
     temp_aou <- aou_regression[, c(y, x)]
     colnames(temp_aou) <- c("y", "x")
-    temp_aou$y <- as.numeric(temp_aou$y == 1)
+    temp_aou$y <- as.integer(temp_aou$y)
     
     model_aou <- glm(y ~ x, data = temp_aou, family = "binomial")
     aou_beta <- summary(model_aou)$coefficients["x", 1]
+      
+    aou_interval <- confint(model_aou,verbose=F)
+    aou_lower <- aou_interval["x",1]
+    aou_upper <- aou_interval["x",2]  
 
     # WAOU Regression
     temp_waou <- aou_regression[, c(y, x)]
     colnames(temp_waou) <- c("y", "x")
-    temp_waou$y <- as.numeric(temp_waou$y == 1)
+    temp_waou$y <- as.integer(temp_waou$y)
+    temp_waou$weight <- aou_weights  
     
-    model_waou <- glm(y ~ x, data = temp_waou, family = "binomial", weights = aou_weights / mean(aou_weights))
-    waou_beta <- summary(model_waou)$coefficients["x", 1]
+    waou_survey <- svydesign(ids=~0,weights=~weight,data=temp_waou)
+    model_waou <- svyglm(y ~ x,design=waou_survey,family="binomial")
+    waou_beta <- summary(model_waou)$coefficients["x",1]
+      
+    waou_interval <- confint(model_waou,verbose=F)
+    waou_lower <- waou_interval["x",1]
+    waou_upper <- waou_interval["x",2]  
+    
 
     # Append results
-    beta_df <- rbind(beta_df, data.frame(Formula = formula_to_paste, 
-                                         NHANES_Beta = nhanes_beta, 
-                                         AOU_Beta = aou_beta, 
-                                         WAOU_Beta = waou_beta))
+    beta_df <- rbind(beta_df, data.frame(formula = formula_to_paste, 
+                                         beta_nhanes = nhanes_beta, 
+                                         beta_aou = aou_beta, 
+                                         beta_waou = waou_beta))
+      
+    beta_graphing <- rbind(beta_graphing, data.frame(formula = c(formula_to_paste,formula_to_paste,formula_to_paste),
+                                                    beta = c(nhanes_beta,aou_beta,waou_beta),
+                                                    lower = c(nhanes_lower,aou_lower,waou_lower),
+                                                    upper = c(nhanes_upper,aou_upper,waou_upper),
+                                                    dataset = c("NHANES","All of Us (unweighted)","All of Us (weighted)") 
+                                                    ))  
   }
 }
 
-# View results
-# print(beta_df)
-head(beta_df)
-nrow(beta_df)
-
-beta_df$nhanes_aou_uw <- abs(beta_df$NHANES_Beta - beta_df$AOU_Beta)
-beta_df$nhanes_aou_w <- abs(beta_df$NHANES_Beta - beta_df$WAOU_Beta)
-beta_df$diff_label <- ifelse(beta_df$nhanes_aou_uw > 0.05,"big","not big")
-
-head(beta_df)
-nrow(beta_df[beta_df$diff_label == "big",])
-nrow(beta_df[beta_df$diff_label == "not big",])
-
-# Convert to long format
-beta_df_long <- beta_df %>%
-  pivot_longer(cols = c(NHANES_Beta, AOU_Beta, WAOU_Beta), 
-               names_to = "Source", 
-               values_to = "Beta_coeff") %>%
-  mutate(Source = gsub("_Beta", "", Source))  # Clean up column names
-
-# View the transformed data
-# print(beta_df_long)
 # Define the mapping as a named vector
 name_map <- c(
   "age" = "Age",
@@ -804,7 +835,7 @@ name_map <- c(
   "race_3" = "Race and Ethnicity (Hispanic or Latino)",
   "race_4" = "Race and Ethnicity (Asian)",
   "race_5" = "Race and Ethnicity (Other/Multiracial)",
-  "sex_at_birth" = "Sex at Birth",
+  "sex_at_birth" = "Sex",
   "education" = "Education",  
   "education_1" = "Education (Less than 9th grade)",
   "education_2" = "Education (9-11th grade)",
@@ -844,481 +875,57 @@ replace_terms <- function(text_column, replacements) {
   return(text_column)
 }
 
-# Apply the function to the "formula" column in corr_df_2
-beta_df_long <- beta_df_long %>%
-  mutate(Formula = replace_terms(Formula, name_map))
+beta_df <- beta_df %>%
+  mutate(formula = replace_terms(formula, name_map))
 
-beta_df<- beta_df %>%
-  mutate(Formula = replace_terms(Formula, name_map))
+beta_graphing <- beta_graphing %>%
+  mutate(formula = replace_terms(formula, name_map))
 
-# Regression Simple
-# Phenotype
-# BMI
-model_family <- "gaussian"
+uw_model <- lm(beta_aou ~ beta_nhanes, data=beta_df)
+summary(uw_model)
 
-# All of Us
-colnames(pheno_aou) <- c("id","pheno")
+w_model <- lm(beta_waou ~ beta_nhanes, data=beta_df)
+summary(w_model)
 
-#NHANES
-library(haven)
-pheno1720 <- read_xpt("P_BMX (1).xpt")
-pheno2123 <- read_xpt("BMX_L.xpt")
+beta_g <- ggplot(beta_df,aes(x=beta_nhanes,y=beta_aou)) + 
+                    geom_point(color="gray69",size=3) + 
+                    geom_smooth(method = "lm",se=TRUE,col="black") + 
+                    geom_abline(slope=1, intercept=0, linetype='dashed', col = 'red',linewidth=1) + 
+                    theme_classic() +
+                    ggtitle("Effect Size Comparison") +
+                    xlab("NHANES Effect Sizes") +
+                    ylab("All of Us (unweighted) Effect Sizes")
 
-pheno1720 <- pheno1720 %>% subset(select=c(id=SEQN,pheno=BMXBMI))
-pheno2123 <- pheno2123 %>% subset(select=c(id=SEQN,pheno=BMXBMI))
+beta_g <- ggplot(beta_df,aes(x=beta_nhanes,y=beta_waou)) + 
+                    geom_point(color="gray69",size=3) + 
+                    geom_smooth(method = "lm",se=TRUE,col="black") + 
+                    geom_abline(slope=1, intercept=0, linetype='dashed', col = 'red',linewidth=1) + 
+                    theme_classic() +
+                    ggtitle("Effect Size Comparison") +
+                    xlab("NHANES Effect Sizes") +
+                    ylab("All of Us (weighted) Effect Sizes")
 
-pheno_nhanes <- rbind(pheno1720,pheno2123)
-colnames(pheno_nhanes) <- c("id","pheno")
+## Graphing
+beta_df$diff <- abs(beta_df$beta_aou - beta_df$beta_nhanes)
+beta_df <- beta_df %>%
+                arrange(desc(diff))
 
-head(pheno_nhanes)
+graphing_df <- data.frame(formula = as.factor(beta_df$formula))
+graphing_df <- left_join(graphing_df,beta_graphing,by="formula")
 
-# T2D
-model_family <- "quasibinomial"
+graphing_df2 <- graphing_df %>% filter(formula %in% formulas[1:30])
+graphing_df2$formula <- factor(graphing_df2$formula,levels=rev(unique(graphing_df2$formula)))
 
-#All of Us
-colnames(pheno_aou) <- c("id","pheno")
-pheno_aou <- pheno_aou %>%
-  mutate(
-    pheno = case_when(
-      pheno == "Case" ~ 1,
-      pheno == "Control" ~ 0,
-      TRUE ~ NA_real_  # Assign NA if BMI is missing or doesn't fit
-    )
-  )
-
-#NHANES
-library(haven)
-diabetes1720 <- read_xpt("P_DIQ.xpt")
-diabetes2123 <- read_xpt("DIQ_L.xpt")
-diabetes1720 <- diabetes1720 %>% subset(select=c(id=SEQN,Status=DIQ010))
-diabetes2123 <- diabetes2123 %>% subset(select=c(id=SEQN,Status=DIQ010))
-pheno_nhanes <- rbind(diabetes1720,diabetes2123)
-colnames(pheno_nhanes) <- c("id","pheno")
-pheno_nhanes <- pheno_nhanes %>%
-  mutate(
-    pheno = case_when(
-      pheno == 1 ~ 1,
-      pheno == 2 ~ 0,
-      TRUE ~ NA_real_  # Assign NA if BMI is missing or doesn't fit
-    )
-  )
-      
-# Import and merge All of Us data
-complete_aou_df <- full_join(complete_aou_df,aou_weights,by="id") # Merge dataset with weights
-complete_aou_df <- complete_aou_df[complete.cases(complete_aou_df),] # Save only complete cases (should already be complete cases)
-complete_aou_df <- complete_aou_df %>% subset(select=-c(weight)) %>% rename(weight = post_weight)
-head(complete_aou_df)
-complete_aou_df <- full_join(complete_aou_df,pheno_aou,by="id")
-
-if(model_family == "quasibinomial"){
-    complete_aou_df$pheno <- as.integer(complete_aou_df$pheno)
-}
-      
-complete_aou_df$race <- as.factor(complete_aou_df$race)
-complete_aou_df$sex_at_birth <- as.factor(complete_aou_df$sex_at_birth)
-      
-complete_aou_df <- complete_aou_df[complete.cases(complete_aou_df),]
-nrow(complete_aou_df)
-      
-x_uw <- glm(pheno ~ age + race + sex_at_birth,data=complete_aou_df,family=model_family)
-summary(x_uw)
-      
-aou_survey <- svydesign(ids=~0,weights=~weight,data=complete_aou_df)
-x_w <- svyglm(pheno ~ age + race + sex_at_birth,design=aou_survey,family=model_family)
-summary(x_w)
-
-# Import and merge NHANES data
-complete_nhanes_df <- full_join(complete_nhanes_df,nhanes_weights,by="id") # Merge dataset with weights
-complete_nhanes_df <- complete_nhanes_df[complete.cases(complete_nhanes_df),] # Save complete cases
-      
-head(complete_nhanes_df)
-      
-demo1720 <- read_xpt("P_DEMO (2).xpt")
-demo2123 <- read_xpt("DEMO_L.xpt")
-      
-demo1720 <- demo1720 %>%
-                select(id=SEQN,
-                      psu=SDMVPSU,
-                      stra=SDMVSTRA)
-
-demo2123 <- demo2123 %>%
-                select(id=SEQN,
-                      psu=SDMVPSU,
-                      stra=SDMVSTRA)
-      
-demo <- rbind(demo1720,demo2123)
-      
-complete_nhanes_df <- full_join(complete_nhanes_df,demo,by="id")
-complete_nhanes_df <- full_join(complete_nhanes_df,pheno_nhanes,by="id")
-      
-if(model_family == "quasibinomial"){
-    complete_nhanes_df$pheno <- as.factor(complete_nhanes_df$pheno)
-}
-      
-complete_nhanes_df$race <- as.factor(complete_nhanes_df$race)
-complete_nhanes_df$sex_at_birth <- as.factor(complete_nhanes_df$sex_at_birth)
-complete_nhanes_df <- complete_nhanes_df[complete.cases(complete_nhanes_df),]
-nrow(complete_nhanes_df)
-NHANES_all <- svydesign(data=complete_nhanes_df, id=~psu, strata=~stra, weights=~weight, nest=TRUE)
-svymean(~age,NHANES_all)
-nhanes_model <- svyglm(pheno ~ age + race + sex_at_birth,design=NHANES_all,family=model_family)
-nhanes_model$family
-summary(nhanes_model)
-      
-# Combine all
-aou_uw_summary <- summary(x_uw)$coefficients
-aou_w_summary <- summary(x_w)$coefficients
-nhanes_summary <- summary(nhanes_model)$coefficients
-
-aou_uw <- data.frame(
-  Variable = rownames(aou_uw_summary),  # Column 1: Variable names
-  Beta = aou_uw_summary[, "Estimate"],  # Column 2: Coefficients (β)
-  Std_Error = aou_uw_summary[, "Std. Error"]  # Column 3: Standard Error
-) %>%
-  filter(Variable != "(Intercept)")  # Remove intercept
-
-aou_uw$Model <- "AoU"
-confidence_temp <- confint(x_uw)
-aou_uw$Lower <- confidence_temp[2:nrow(confidence_temp),1]
-aou_uw$Upper <- confidence_temp[2:nrow(confidence_temp),2]
-
-aou_w <- data.frame(
-  Variable = rownames(aou_w_summary),  # Column 1: Variable names
-  Beta = aou_w_summary[, "Estimate"],  # Column 2: Coefficients (β)
-  Std_Error = aou_w_summary[, "Std. Error"]  # Column 3: Standard Error
-) %>%
-  filter(Variable != "(Intercept)")  # Remove intercept
-
-aou_w$Model <- "wAoU"
-confidence_temp <- confint(x_w)
-aou_w$Lower <- confidence_temp[2:nrow(confidence_temp),1]
-aou_w$Upper <- confidence_temp[2:nrow(confidence_temp),2]
-
-nhanes <- data.frame(
-  Variable = rownames(nhanes_summary),  # Column 1: Variable names
-  Beta = nhanes_summary[, "Estimate"],  # Column 2: Coefficients (β)
-  Std_Error = nhanes_summary[, "Std. Error"]  # Column 3: Standard Error
-) %>%
-  filter(Variable != "(Intercept)")  # Remove intercept
-
-nhanes$Model <- "NHANES"
-confidence_temp <- confint(nhanes_model)
-nhanes$Lower <- confidence_temp[2:nrow(confidence_temp),1]
-nhanes$Upper <- confidence_temp[2:nrow(confidence_temp),2]
-regression_results <- rbind(aou_uw,aou_w,nhanes)
-
-# Step 1: Extract NHANES Beta order
-nhanes_order <- regression_results %>%
-  filter(Model == "NHANES") %>%  # Keep only NHANES rows
-  arrange(desc(Beta)) %>%  # Order by Beta
-  pull(Variable)  # Get ordered variable names
-
-# Step 2: Apply NHANES ordering to full dataset
-regression_results <- regression_results %>%
-  mutate(Variable = factor(Variable, levels = nhanes_order))  # Set factor levels based on NHANES
-regression_results <- regression_results %>%
-                        mutate(Variable=recode(Variable,"age"="Age",
-                                  "race2"="Race (Black or African American)",
-                                  "race3"="Race (Hispanic or Latino)",
-                                  "race4"="Race (Asian)",
-                                  "race5"="Race (Other/Multiracial)",
-                                  "sex_at_birth1"="Sex at Birth (Female)"
-                             ))
-      
-t2d_plot <- ggplot(regression_results, aes(x = Variable, y = Beta, color = factor(Model,c("wAoU","AoU","NHANES")))) +
+beta_plot <- ggplot(graphing_df2, aes(x = beta, y = formula, color = factor(dataset,c("NHANES","All of Us (unweighted)","All of Us (weighted)")))) +
+  geom_stripes(odd = "#33333333", even = "white") +
   geom_point(position = position_dodge(width = 0.5), size = 5) +  # Points for beta
-  geom_errorbar(aes(ymin = Lower, ymax = Upper), 
+  geom_errorbar(aes(xmin = lower, xmax = upper), 
                 position = position_dodge(width = 0.5), width = 0.2) +  # Error bars
-  theme_minimal() +
-  coord_flip() +  # Flip for readability
-  labs(x = "Predictors",
-       y = "Beta Coefficient") +
+  theme_classic() +
+  labs(x = "Effect Size Estimates",y="") +
   theme(legend.position = "bottom",legend.title = element_blank()) +  # Move legend below
-  geom_hline(yintercept = 0, linetype = "dashed", color = "black")
+  geom_hline(yintercept = 0, linetype = "dashed", color = "black") +
+  scale_color_manual(values=c("darkgreen","darkblue","darkorange"))
+#   coord_flip()
 
-t2d_plot
-      
-# Regression Full
-# Phenotype
-# BMI
-model_family <- "gaussian"
-
-# All of Us
-colnames(pheno_aou) <- c("id","pheno")
-
-# NHANES
-library(haven)
-pheno1720 <- read_xpt("P_BMX (1).xpt")
-pheno2123 <- read_xpt("BMX_L.xpt")
-pheno1720 <- pheno1720 %>% subset(select=c(id=SEQN,pheno=BMXBMI))
-pheno2123 <- pheno2123 %>% subset(select=c(id=SEQN,pheno=BMXBMI))
-pheno_nhanes <- rbind(pheno1720,pheno2123)
-colnames(pheno_nhanes) <- c("id","pheno")
-head(pheno_nhanes)
-
-# T2D
-model_family <- "quasibinomial"
-
-# All of Us
-colnames(pheno_aou) <- c("id","pheno")
-pheno_aou <- pheno_aou %>%
-  mutate(
-    pheno = case_when(
-      pheno == "Case" ~ 1,
-      pheno == "Control" ~ 0,
-      TRUE ~ NA_real_  # Assign NA if BMI is missing or doesn't fit
-    )
-  )
-
-#NHANES
-library(haven)
-diabetes1720 <- read_xpt("P_DIQ.xpt")
-diabetes2123 <- read_xpt("DIQ_L.xpt")
-diabetes1720 <- diabetes1720 %>% subset(select=c(id=SEQN,Status=DIQ010))
-diabetes2123 <- diabetes2123 %>% subset(select=c(id=SEQN,Status=DIQ010))
-pheno_nhanes <- rbind(diabetes1720,diabetes2123)
-colnames(pheno_nhanes) <- c("id","pheno")
-pheno_nhanes <- pheno_nhanes %>%
-  mutate(
-    pheno = case_when(
-      pheno == 1 ~ 1,
-      pheno == 2 ~ 0,
-      TRUE ~ NA_real_  # Assign NA if BMI is missing or doesn't fit
-    )
-  )
-
-# Import and merge All of Us data
-complete_aou_df <- full_join(complete_aou_df,aou_weights,by="id") # Merge dataset with weights
-complete_aou_df <- complete_aou_df[complete.cases(complete_aou_df),] # Save only complete cases (should already be complete cases)
-complete_aou_df <- complete_aou_df %>% subset(select=-c(weight)) %>% rename(weight = post_weight)
-      
-head(complete_aou_df)
-      
-complete_aou_df <- full_join(complete_aou_df,pheno_aou,by="id")
-      
-if(model_family == "quasibinomial"){
-    complete_aou_df$pheno <- as.integer(complete_aou_df$pheno)
-}
-      
-complete_aou_df$race <- as.factor(complete_aou_df$race)
-complete_aou_df$sex_at_birth <- as.factor(complete_aou_df$sex_at_birth)
-complete_aou_df$education <- as.factor(complete_aou_df$education)
-complete_aou_df$marital_status <- as.factor(complete_aou_df$marital_status)
-complete_aou_df$health_insurance <- as.factor(complete_aou_df$health_insurance)
-complete_aou_df$nativity <- as.factor(complete_aou_df$nativity)
-complete_aou_df$drinking_habits <- as.factor(complete_aou_df$drinking_habits)
-complete_aou_df$smoking_habits <- as.factor(complete_aou_df$smoking_habits)
-      
-complete_aou_df <- complete_aou_df[complete.cases(complete_aou_df),]
-nrow(complete_aou_df)
-      
-x_uw <- glm(pheno ~ age + race + sex_at_birth + education + marital_status + health_insurance + nativity + drinking_habits + smoking_habits,data=complete_aou_df,family=model_family)
-summary(x_uw)
-      
-aou_survey <- svydesign(ids=~0,weights=~weight,data=complete_aou_df)
-x_w <- svyglm(pheno ~ age + race + sex_at_birth + education + marital_status + health_insurance + nativity + drinking_habits + smoking_habits,design=aou_survey,family=model_family)
-summary(x_w)
-      
-# Import and merge NHANES data
-complete_nhanes_df <- full_join(complete_nhanes_df,nhanes_weights,by="id") # Merge dataset with weights
-complete_nhanes_df <- complete_nhanes_df[complete.cases(complete_nhanes_df),] # Save complete cases
-      
-head(complete_nhanes_df)
-      
-demo1720 <- read_xpt("P_DEMO (2).xpt")
-demo2123 <- read_xpt("DEMO_L.xpt")
-      
-demo1720 <- demo1720 %>%
-                select(id=SEQN,
-                      psu=SDMVPSU,
-                      stra=SDMVSTRA)
-
-demo2123 <- demo2123 %>%
-                select(id=SEQN,
-                      psu=SDMVPSU,
-                      stra=SDMVSTRA)
-demo <- rbind(demo1720,demo2123)
-      
-complete_nhanes_df <- full_join(complete_nhanes_df,demo,by="id")
-complete_nhanes_df <- full_join(complete_nhanes_df,pheno_nhanes,by="id")
-      
-if(model_family == "quasibinomial"){
-    complete_nhanes_df$pheno <- as.factor(complete_nhanes_df$pheno)
-}
-      
-complete_nhanes_df$race <- as.factor(complete_nhanes_df$race)
-complete_nhanes_df$sex_at_birth <- as.factor(complete_nhanes_df$sex_at_birth)
-complete_nhanes_df$education <- as.factor(complete_nhanes_df$education)
-complete_nhanes_df$marital_status <- as.factor(complete_nhanes_df$marital_status)
-complete_nhanes_df$health_insurance <- as.factor(complete_nhanes_df$health_insurance)
-complete_nhanes_df$nativity <- as.factor(complete_nhanes_df$nativity)
-complete_nhanes_df$drinking_habits <- as.factor(complete_nhanes_df$drinking_habits)
-complete_nhanes_df$smoking_habits <- as.factor(complete_nhanes_df$smoking_habits)
-complete_nhanes_df <- complete_nhanes_df[complete.cases(complete_nhanes_df),]
-      
-nrow(complete_nhanes_df)
-      
-NHANES_all <- svydesign(data=complete_nhanes_df, id=~psu, strata=~stra, weights=~weight, nest=TRUE)
-svymean(~age,NHANES_all)
-nhanes_model <- svyglm(pheno ~ age + race + sex_at_birth + education + marital_status + health_insurance + nativity + drinking_habits + smoking_habits,design=NHANES_all,family=model_family)
-summary(nhanes_model)
-      
-# Combine all
-aou_uw_summary <- summary(x_uw)$coefficients
-aou_w_summary <- summary(x_w)$coefficients
-nhanes_summary <- summary(nhanes_model)$coefficients
-      
-head(aou_uw_summary)
-      
-aou_uw <- data.frame(
-  Variable = rownames(aou_uw_summary),  # Column 1: Variable names
-  Beta = aou_uw_summary[, "Estimate"],  # Column 2: Coefficients (β)
-  Std_Error = aou_uw_summary[, "Std. Error"]  # Column 3: Standard Error
-) %>%
-  filter(Variable != "(Intercept)")  # Remove intercept
-
-aou_uw$Model <- "AoU"
-confidence_temp <- confint(x_uw)
-aou_uw$Lower <- confidence_temp[2:nrow(confidence_temp),1]
-aou_uw$Upper <- confidence_temp[2:nrow(confidence_temp),2]
-
-aou_w <- data.frame(
-  Variable = rownames(aou_w_summary),  # Column 1: Variable names
-  Beta = aou_w_summary[, "Estimate"],  # Column 2: Coefficients (β)
-  Std_Error = aou_w_summary[, "Std. Error"]  # Column 3: Standard Error
-) %>%
-  filter(Variable != "(Intercept)")  # Remove intercept
-
-aou_w$Model <- "wAoU"
-confidence_temp <- confint(x_w)
-aou_w$Lower <- confidence_temp[2:nrow(confidence_temp),1]
-aou_w$Upper <- confidence_temp[2:nrow(confidence_temp),2]
-
-nhanes <- data.frame(
-  Variable = rownames(nhanes_summary),  # Column 1: Variable names
-  Beta = nhanes_summary[, "Estimate"],  # Column 2: Coefficients (β)
-  Std_Error = nhanes_summary[, "Std. Error"]  # Column 3: Standard Error
-) %>%
-  filter(Variable != "(Intercept)")  # Remove intercept
-
-nhanes$Model <- "NHANES"
-confidence_temp <- confint(nhanes_model)
-nhanes$Lower <- confidence_temp[2:nrow(confidence_temp),1]
-nhanes$Upper <- confidence_temp[2:nrow(confidence_temp),2]
-      
-head(aou_w)
-
-regression_results <- rbind(aou_uw,aou_w,nhanes)
-      
-head(regression_results)
-
-# Step 1: Extract NHANES Beta order
-nhanes_order <- regression_results %>%
-  filter(Model == "NHANES") %>%  # Keep only NHANES rows
-  arrange(desc(Beta)) %>%  # Order by Beta
-  pull(Variable)  # Get ordered variable names
-
-# Step 2: Apply NHANES ordering to full dataset
-regression_results <- regression_results %>%
-  mutate(Variable = factor(Variable, levels = nhanes_order))  # Set factor levels based on NHANES
-regression_results <- regression_results %>%
-                        mutate(Variable=recode(Variable,"age"="Age",
-                                  "race2"="Race (Black or African American)",
-                                  "race3"="Race (Hispanic or Latino)",
-                                  "race4"="Race (Asian)",
-                                  "race5"="Race (Other/Multiracial)",
-                                  "sex_at_birth1"="Sex at Birth (Female)",
-                                   "education2"="Education (9-11th grade)",
-                                   "education3"="Education (High school graduate/GED)",
-                                   "education4"="Education (Some college/AA)",
-                                   "education5"="Education (College graduate or above)",
-                                   "marital_status2"="Marital status (Widowed/Divorced/Separated)",
-                                   "marital_status3"="Marital status (Never married)",
-                                   "health_insurance1"="Health insurance (Yes)",
-                                   "nativity2"="Nativity (Other)",
-                                   "drinking_habits2"="Drinking habits (Less than yearly)",
-                                   "drinking_habits3"="Drinking habits (Monthly or less)",
-                                   "drinking_habits4"="Drinking habits (Two to four times a month)",
-                                   "drinking_habits5"="Drinking habits (Twice or more a week)",
-                                   "smoking_habits2"="Smoking habits (Former smoker)",
-                                   "smoking_habits3"="Smoking habits (Sometimes smokes)",
-                                   "smoking_habits4"="Smoking habits (Daily smoker)"
-                             ))
-      
-regression_results$Variable <- as.factor(regression_results$Variable)
-      
-t2d_plot <- ggplot(regression_results, aes(x = Variable, y = Beta, color = factor(Model,c("wAoU","AoU","NHANES")))) +
-  geom_point(position = position_dodge(width = 0.5), size = 5) +  # Points for beta
-  geom_errorbar(aes(ymin = Lower, ymax = Upper), 
-                position = position_dodge(width = 0.5), width = 0.2) +  # Error bars
-  theme_minimal() +
-  coord_flip() +  # Flip for readability
-  labs(x = "Predictors",
-       y = "Beta Coefficient") +
-  theme(legend.position = "bottom",legend.title = element_blank()) +  # Move legend below
-  geom_hline(yintercept = 0, linetype = "dashed", color = "black")
-
-t2d_plot
-      
-# Check overlap
-overlap_df <- data.frame()
-for(var in unique(regression_results$Variable)){
-    temp_df <- regression_results[regression_results$Variable == var,]
-    temp_aou <- temp_df[temp_df$Model == "AoU",]
-    temp_waou <- temp_df[temp_df$Model == "wAoU",]
-    
-    aou_range <- c(temp_aou$Lower,temp_aou$Upper)
-    waou_range <- c(temp_waou$Lower,temp_waou$Upper)
-    
-    # Check for overlap
-    overlap <- max(aou_range[1], waou_range[1]) <= min(aou_range[2], waou_range[2])
-    
-    overlap_df[nrow(overlap_df)+1,1] <- var
-    overlap_df[nrow(overlap_df),2] <- ifelse(overlap==TRUE,"Overlap","No overlap")
-    
-}
-overlap_df
-
-# Coeff compare
-beta_plot_uw_w <- full_join(aou_uw,aou_w,by="Variable")
-cor(aou_uw$Beta,aou_w$Beta)
-summary(lm(Beta.y~Beta.x,data=beta_plot_uw_w))
-uw_w <- ggplot(beta_plot_uw_w,aes(x=Beta.x,y=Beta.y)) + 
-                    geom_point(color="black") + 
-                    geom_smooth(method = "lm",se=FALSE,col="black") + 
-                    geom_abline(slope=1, intercept=0, linetype='dashed', col = 'red',linewidth=1) + 
-                    theme_classic(base_size=24) +
-#                     ggtitle("Standard Error for European GWAS Analyses") +
-                    xlab("All of Us (unweighted) Beta") +
-                    ylab("All of Us (weighted) Beta")
-      
-beta_plot_uw_nhanes <- full_join(aou_uw,nhanes,by="Variable")
-cor(aou_uw$Beta,nhanes$Beta)
-summary(lm(Beta.y~Beta.x,data=beta_plot_uw_nhanes))
-uw_nhanes <- ggplot(beta_plot_uw_nhanes,aes(x=Beta.x,y=Beta.y)) + 
-                    geom_point(color="black") + 
-                    geom_smooth(method = "lm",se=FALSE,col="black") + 
-                    geom_abline(slope=1, intercept=0, linetype='dashed', col = 'red',linewidth=1) + 
-                    theme_classic(base_size=24) +
-#                     ggtitle("Standard Error for European GWAS Analyses") +
-                    xlab("All of Us (unweighted) Beta") +
-                    ylab("NHANES Beta")
-      
-beta_plot_w_nhanes <- full_join(aou_w,nhanes,by="Variable")
-cor(aou_w$Beta,nhanes$Beta)
-summary(lm(Beta.y~Beta.x,data=beta_plot_w_nhanes))
-w_nhanes <- ggplot(beta_plot_w_nhanes,aes(x=Beta.x,y=Beta.y)) + 
-                    geom_point(color="black") + 
-                    geom_smooth(method = "lm",se=FALSE,col="black") + 
-                    geom_abline(slope=1, intercept=0, linetype='dashed', col = 'red',linewidth=1) + 
-                    theme_classic(base_size=24) +
-#                     ggtitle("Standard Error for European GWAS Analyses") +
-                    xlab("All of Us (weighted) Beta") +
-                    ylab("NHANES Beta")
-      
-library(patchwork)
-full <- uw_w + uw_nhanes + w_nhanes
-
-fig1_row3 <- (uw_w | uw_nhanes | w_nhanes) #+ theme_classic(base_size=24)# + plot_layout(widths = c(1.5,4,4,2))
-
-fig1_row3
+beta_plot
