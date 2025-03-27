@@ -5,10 +5,10 @@ library(tidyverse)
 # 2017-2020
 
 ## Import data
-demographics_1720 <- read_xpt("P_DEMO (2).xpt")
-alcohol_1720 <- read_xpt("P_ALQ (2).xpt")
-insurance_1720 <- read_xpt("P_HIQ (2).xpt")
-smoking_1720 <- read_xpt("P_SMQ (1).xpt")
+demographics_1720 <- read_xpt("P_DEMO.xpt")
+alcohol_1720 <- read_xpt("P_ALQ.xpt")
+insurance_1720 <- read_xpt("P_HIQ.xpt")
+smoking_1720 <- read_xpt("P_SMQ.xpt")
 oh_1720 <- read_xpt("P_HUQ.xpt")
 
 ## Demographics
@@ -111,6 +111,7 @@ alcohol_1720 <- alcohol_1720 %>%
                             ever_drank = ALQ111,
                             current_drink = ALQ121
                         )
+
 alcohol_1720 <- alcohol_1720 %>% subset(select=c(id,ever_drank,current_drink))
 
 alcohol_1720$ever_drank[alcohol_1720$ever_drank == 7] <- NA
@@ -126,6 +127,7 @@ smoking_1720 <- smoking_1720 %>%
                             ever_smoke = SMQ020,
                             current_smoke = SMQ040
                         )
+
 smoking_1720 <- smoking_1720 %>% subset(select=c(id,ever_smoke,current_smoke))
 
 smoking_1720$ever_smoke[smoking_1720$ever_smoke == 7] <- NA
@@ -138,7 +140,7 @@ smoking_1720$current_smoke[smoking_1720$current_smoke == 9] <- NA
 ## Merge
 df_list <- list(demographics_1720,insurance_1720,oh_1720,alcohol_1720,smoking_1720)
 
-nhanes_1720 <- reduce(df_list, full_join, by = "id")  # Replace with actual column name
+nhanes_1720 <- reduce(df_list, full_join, by = "id")
 nhanes_1720 <- nhanes_1720 %>% filter(age >= 18 & age < 80)
 
 nhanes_1720_og <- nhanes_1720
