@@ -1,17 +1,4 @@
 # Demographics
-
-# Use snippet 'add_age_to_demographics' to calculate the age of people in your demographics.
-# It assumes the 'Setup' snippet has been executed.
-# It also assumes that you got your demographics dataframe from Dataset Builder
-
-# Note: This snippet calculates current age and does not take into account whether the person is already dead
-
-
-## -----[ CHANGE THE DATAFRAME NAME(S) `YOUR_DATASET_NAME_person_df` TO MATCH YOURS FROM DATASET BUILDER] -----
-demographics_df <- demographics_df %>%
-                mutate_if(is.list, as.character) %>%
-                mutate(age = year(today()) - year(demographics_df$date_of_birth))
-
 demographics_df <- demographics_df %>%
   mutate(sex_at_birth = case_when(
     sex_at_birth == "Male" ~ 0,      # Assign 0 to Male
@@ -35,12 +22,14 @@ demographics_df <- demographics_df %>%
 
 colnames(demographics_df)[1] <- "id"
 demographics_df <- demographics_df %>%
-                    subset(select=c(id,sex_at_birth,age,race_ethnicity)) # Subset to wanted variables
+                    subset(select=c(id,sex_at_birth,age,race_ethnicity))
 colnames(demographics_df)[4] <- "race"
 
 # Basics
+basics_df 
+
 ## Education
-education_df <- basics_df[basics_df$question == "Education Level: Highest Grade",] # Select education
+education_df <- basics_df[basics_df$question == "Education Level: Highest Grade",]
 
 education_df <- education_df %>%
   mutate(
@@ -75,7 +64,7 @@ health_insurance_df <- health_insurance_df %>%
 health_insurance_df <- health_insurance_df %>%
                     subset(select=c(person_id,health_insurance))
 
-## Marital Status
+## Marital status
 marital_status_df <- basics_df[basics_df$question == "Marital Status: Current Marital Status",]
 
 marital_status_df <- marital_status_df %>%
@@ -111,10 +100,11 @@ nativity_df <- nativity_df %>%
 
 ## Merge basics
 df_list <- list(education_df,health_insurance_df,marital_status_df,nativity_df)
-basics_df_final <- reduce(df_list, full_join, by = "person_id")
+
+basics_df_final <- reduce(df_list, full_join, by = "person_id")  # Replace with actual column name
 colnames(basics_df_final)[1] <- "id"
 
-# General Health
+# General health
 general_health_df <- general_health_df %>%
   mutate(
     overall_health = case_when(
@@ -132,6 +122,8 @@ general_health_df <- general_health_df %>%
 colnames(general_health_df)[1] <- "id"
 
 # Smoking
+smoking_df 
+
 ever_smoked_df <- smoking_df[smoking_df$question == "Smoking: 100 Cigs Lifetime",]
 current_smoke_df <- smoking_df[smoking_df$question == "Smoking: Smoke Frequency",]
 
@@ -155,7 +147,9 @@ smoking_df <- smoking_df %>%
 smoking_df <- smoking_df %>%
                 subset(select=c(id,smoking_habits))
 
-# Drinking
+# Alcohol
+alcohol_df 
+
 ever_drank_df <- alcohol_df[alcohol_df$question == "Alcohol: Alcohol Participant",]
 current_drink_df <- alcohol_df[alcohol_df$question == "Alcohol: Drink Frequency Past Year",]
 
@@ -181,8 +175,9 @@ alcohol_df <- alcohol_df %>%
 alcohol_df <- alcohol_df %>%
                 subset(select=c(id,drinking_habits))
 
-# Merge everything
+# Final merge
 df_list <- list(demographics_df,basics_df_final,general_health_df,smoking_df,alcohol_df)
+
 aou_df_final <- reduce(df_list, full_join, by = "id")
 
 aou_df_final <- aou_df_final %>%
@@ -198,8 +193,8 @@ aou_df_final <- aou_df_final %>%
                                    drinking_habits,
                                    smoking_habits))
 
-aou_df_final <- (aou_df_final[complete.cases(aou_df_final),]) # Save complete cases only
-aou_df_final <- aou_df_final[aou_df_final$age >= 18 & aou_df_final$age < 80,] # Subset age
+aou_df_final <- (aou_df_final[complete.cases(aou_df_final),])
+aou_df_final <- aou_df_final[aou_df_final$age >= 18 & aou_df_final$age < 80,]
 
 aou_df_final$data_label <- "All of Us"
 aou_df_final$participation <- 1
